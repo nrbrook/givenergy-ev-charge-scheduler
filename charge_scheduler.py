@@ -1,0 +1,136 @@
+import argparse
+import datetime
+import logging
+import requests
+import agile_prices
+import re
+
+# Setup logging for output and errors
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+
+logger = logging.getLogger('chargeLogger')
+error_logger = logging.getLogger('errorLogger')
+
+# API base URL and headers template
+API_BASE_URL = 'https://api.givenergy.cloud/v1/ev-charger'
+HEADERS_TEMPLATE = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json'
+}
+
+def parse_time(time_str):
+    return datetime.datetime.strptime(time_str, "%H:%M").time()
+
+def fetch_uuids(api_key, to_start):
+    url = f'{API_BASE_URL}'
+    params = {'page': '1'}
+    headers = HEADERS_TEMPLATE.copy()
+    headers['Authorization'] = f'Bearer {api_key}'
+    try:
+        response = requests.get(url, headers=headers, params=params)
+        data = response.json().get('data', [])
+
+        # Filter UUIDs based on status
+        uuids = []
+        filter_statuses = ["Preparing", "SuspendedEVSE"] if to_start else ["Charging"]
+
+        for charger in data:
+            if charger['status'] in filter_statuses:
+                uuids.append(charger['uuid'])
+            else:
+                # Log the skipped charging points
+                logging.info(f"Skipping charger {charger['alias']} (UUID: {charger['uuid']}) - Status: {charger['status']}")
+
+        return uuids
+    except Exception as e:
+        error_logger.error(f"Error fetching UUIDs: {e}")
+        return []
+
+def send_command(api_key, uuid, command):
+    url = f'{API_BASE_URL}/{uuid}/commands/{command}'
+    headers = HEADERS_TEMPLATE.copy()
+    headers['Authorization'] = f'Bearer {api_key}'
+    try:
+        response = requests.post(url, headers=headers)
+        return response.json()
+    except Exception as e:
+        error_logger.error(f"Error sending command {command} to {uuid}: {e}")
+        return None
+
+def set_charging(api_key, status, uuid=None):
+    command = 'start-charge' if status else 'stop-charge'
+    uuids = [uuid] if uuid else fetch_uuids(api_key, status)
+    for uuid in uuids:
+        response = send_command(api_key, uuid, command)
+        if response and response.get('data', {}).get('success'):
+            logging.info(f"Command {command} sent to {uuid}. Response: {response}")
+        else:
+            error_logger.error(f"Failed to send command {command} to {uuid}. Response: {response}")
+
+def price_scheduler(api_key, charger_uuid, db, price):
+    if db == None:
+        raise ValueError(f"No database provided")
+    prices = agile_prices.get_prices_from_db(db, 1)
+    should_charge = prices[0]['price'] <= price
+    logging.info(f"Current price {prices[0]['price']}p {'<=' if should_charge else '>'} {price}p, should{'' if should_charge else ' not'} charge")
+    set_charging(api_key, should_charge, charger_uuid)
+
+def process_schedule(api_key, charger_uuid, schedule_file, db):
+    try:
+        with open(schedule_file, 'r') as file:
+            lines = file.readlines()
+            if not lines or len(lines) == 0:
+                return
+
+            price_pattern = re.compile(r'(\d+)p')
+            price_match = price_pattern.match(lines[0].strip())
+            if price_match:
+                price_scheduler(api_key, charger_uuid, db, int(price_match.group(1)))
+            else:
+                time_pattern = re.compile(r'(\d{1,2})([:.](\d{1,2}))?-(\d{1,2})([:.](\d{1,2}))?')
+                time_match = time_pattern.match(lines[0].strip())
+                if time_match:
+                    groups = time_match.groups()
+                    start_hour, start_minute, end_hour, end_minute = groups[0], groups[2], groups[3], groups[5]
+                    start_minute = '00' if start_minute is None else start_minute
+                    end_minute = '00' if end_minute is None else end_minute
+
+                    start_time = parse_time(f"{start_hour}:{start_minute}")
+                    end_time = parse_time(f"{end_hour}:{end_minute}")
+
+                    now = datetime.datetime.now().time()
+
+                    if start_time <= now <= end_time:
+                        set_charging(api_key, True, charger_uuid)
+                    elif end_time < now < (datetime.datetime.combine(datetime.date.today(), end_time) + datetime.timedelta(minutes=5)).time():
+                        set_charging(api_key, False, charger_uuid)
+                        with open(schedule_file, 'w') as file_write:
+                            file_write.writelines(lines[1:])
+    except Exception as e:
+        error_logger.error(f"Error processing schedule: {e}")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-k", "--api_key", required=True, help="API key for authentication")
+    parser.add_argument("-c", "--charger_uuid", help="UUID of the charging point. If not provided, all charging points are controlled", default=None)
+    parser.add_argument("-f", "--file", help="The schedule file. Will try `schedule.txt` in the current directory if omitted", default="schedule.txt")
+    parser.add_argument("-d", "--database", help="The price database", default=None)
+    parser.add_argument("-l", "--log", help="The log file. If provided, will not log to stdout", default=None)
+    parser.add_argument("-e", "--error", help="The error log file. If provided, will not log to stderr", default=None)
+    args = parser.parse_args()
+
+    if args.log:
+        file_handler = logging.FileHandler('charge_log.txt')
+        logger.addHandler(file_handler)
+    else:
+        logger.addHandler(console_handler)
+
+    if args.error:
+        error_handler = logging.FileHandler('charge_errors.txt')
+        error_logger.addHandler(error_handler)
+    else:
+        error_logger.addHandler(console_handler)
+
+    process_schedule(args.api_key, args.charger_uuid, args.file, args.database)
