@@ -1,17 +1,22 @@
 import argparse
 import datetime
 import logging
+from logging.handlers import RotatingFileHandler
 import requests
 import agile_prices
 import re
 
+log_file_max_size = 1 * 1024 * 1024  # 5 MB
+log_file_backup_count = 0  # Number of backup files to keep
+
+logger_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+
 # Setup logging for output and errors
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.INFO)
 
 logger = logging.getLogger('chargeLogger')
-error_logger = logging.getLogger('errorLogger')
+logger.setLevel(logging.INFO)
 
 # API base URL and headers template
 API_BASE_URL = 'https://api.givenergy.cloud/v1/ev-charger'
@@ -41,11 +46,11 @@ def fetch_uuids(api_key, to_start):
                 uuids.append(charger['uuid'])
             else:
                 # Log the skipped charging points
-                logging.info(f"Skipping charger {charger['alias']} (UUID: {charger['uuid']}) - Status: {charger['status']}")
+                logger.info(f"Skipping charger {charger['alias']} (UUID: {charger['uuid']}) - Status: {charger['status']}")
 
         return uuids
     except Exception as e:
-        error_logger.error(f"Error fetching UUIDs: {e}")
+        logger.error(f"Error fetching UUIDs: {e}")
         return []
 
 def send_command(api_key, uuid, command):
@@ -56,25 +61,29 @@ def send_command(api_key, uuid, command):
         response = requests.post(url, headers=headers)
         return response.json()
     except Exception as e:
-        error_logger.error(f"Error sending command {command} to {uuid}: {e}")
+        logger.error(f"Error sending command {command} to {uuid}: {e}")
         return None
 
 def set_charging(api_key, status, uuid=None):
     command = 'start-charge' if status else 'stop-charge'
     uuids = [uuid] if uuid else fetch_uuids(api_key, status)
+    if len(uuids) == 0:
+        logger.info("No available chargers to control")
+        return
+
     for uuid in uuids:
         response = send_command(api_key, uuid, command)
         if response and response.get('data', {}).get('success'):
-            logging.info(f"Command {command} sent to {uuid}. Response: {response}")
+            logger.info(f"Command {command} sent to {uuid}. Response: {response}")
         else:
-            error_logger.error(f"Failed to send command {command} to {uuid}. Response: {response}")
+            logger.error(f"Failed to send command {command} to {uuid}. Response: {response}")
 
 def price_scheduler(api_key, charger_uuid, db, price):
     if db == None:
         raise ValueError(f"No database provided")
     prices = agile_prices.get_prices_from_db(db, 1)
     should_charge = prices[0]['price'] <= price
-    logging.info(f"Current price {prices[0]['price']}p {'<=' if should_charge else '>'} {price}p, should{'' if should_charge else ' not'} charge")
+    logger.info(f"Current price {prices[0]['price']}p {'<=' if should_charge else '>'} {price}p, should{'' if should_charge else ' not'} charge")
     set_charging(api_key, should_charge, charger_uuid)
 
 def process_schedule(api_key, charger_uuid, schedule_file, db):
@@ -82,6 +91,7 @@ def process_schedule(api_key, charger_uuid, schedule_file, db):
         with open(schedule_file, 'r') as file:
             lines = file.readlines()
             if not lines or len(lines) == 0:
+                logger.info("No schedule")
                 return
 
             price_pattern = re.compile(r'(\d+)p')
@@ -109,7 +119,7 @@ def process_schedule(api_key, charger_uuid, schedule_file, db):
                         with open(schedule_file, 'w') as file_write:
                             file_write.writelines(lines[1:])
     except Exception as e:
-        error_logger.error(f"Error processing schedule: {e}")
+        logger.error(f"Error processing schedule: {e}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -118,19 +128,21 @@ if __name__ == "__main__":
     parser.add_argument("-f", "--file", help="The schedule file. Will try `schedule.txt` in the current directory if omitted", default="schedule.txt")
     parser.add_argument("-d", "--database", help="The price database", default=None)
     parser.add_argument("-l", "--log", help="The log file. If provided, will not log to stdout", default=None)
-    parser.add_argument("-e", "--error", help="The error log file. If provided, will not log to stderr", default=None)
+    parser.add_argument("-e", "--error", help="The error log file", default=None)
     args = parser.parse_args()
 
     if args.log:
-        file_handler = logging.FileHandler('charge_log.txt')
+        file_handler = RotatingFileHandler(args.log, maxBytes=log_file_max_size, backupCount=log_file_backup_count)
+        file_handler.setLevel(logging.INFO)
+        file_handler.setFormatter(logger_formatter)
         logger.addHandler(file_handler)
     else:
         logger.addHandler(console_handler)
 
     if args.error:
-        error_handler = logging.FileHandler('charge_errors.txt')
-        error_logger.addHandler(error_handler)
-    else:
-        error_logger.addHandler(console_handler)
+        error_handler = RotatingFileHandler(args.error, maxBytes=log_file_max_size, backupCount=log_file_backup_count)
+        error_handler.setLevel(logging.ERROR)
+        error_handler.setFormatter(logger_formatter)
+        logger.addHandler(error_handler)
 
     process_schedule(args.api_key, args.charger_uuid, args.file, args.database)
