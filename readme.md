@@ -1,7 +1,18 @@
-# EV Charging Scheduler Script
+# GivEnergy EV Charging Scheduler Script
 
 ## Description
 This script automates the management of electric vehicle (EV) charging schedules based on time or pricing indicators. It reads a schedule from a file, determines whether to start or stop charging, and can handle multiple charging points.
+
+You can write a schedule such as:
+```
+22-23
+0:30-1
+4-5
+```
+And it will charge between those times. Or, if you use Octopus Agile, you can also schedule when a price goes below a set point:
+```
+10p
+```
 
 ## Requirements
 - Python 3.x
@@ -55,6 +66,12 @@ The prices are fetched into a local sqlite database with the included agile-pric
 
 The script(s) can be scheduled to run with crontab (`crontab -e`):
 
+If you just want to schedule by timeslot:
+
+```
+0,30 * * * * cd /path/to/this/dir; /usr/bin/python3 charge_scheduler.py -k <your_api_key> -f <schedule_file>
+```
+
 If you use Octopus agile and want to schedule by price:
 
 ```
@@ -62,10 +79,11 @@ If you use Octopus agile and want to schedule by price:
 05 * * * * cd /path/to/this/dir/agile_prices; /usr/bin/python3 store_prices.py -r <region> -t <agile_tariff> > /path/to/your/log.log
 ```
 
-If you just want to schedule by timeslot:
-```
-0,30 * * * * cd /path/to/this/dir; /usr/bin/python3 charge_scheduler.py -k <your_api_key> -f <schedule_file>
-```
+You should replace `/path/to/this/dir` and `/path/to/your/log.log` with your local paths, and `<region>` and `<agile_tariff>` as follows:
+
+- Go to the octopus developer page and scroll to "Unit rates"
+- There you will see a URL, for example "https://api.octopus.energy/v1/products/AGILE-FLEX-22-11-25/electricity-tariffs/E-1R-AGILE-FLEX-22-11-25-M/standard-unit-rates/"
+- Look at this part: "E-1R-AGILE-FLEX-22-11-25-M". This is in the format E-1R-AGILE-<tariff>-<region>. The tariff is the part following "AGILE-", e.g. "FLEX-22-11-25". The region is the letter at the end, e.g. "M".
 
 ## Note
 The script is intended for scheduled execution (e.g., via cron jobs) to automate EV charging processes.
