@@ -14,6 +14,8 @@ And it will charge between those times. Or, if you use Octopus Agile, you can al
 10p
 ```
 
+It is intended to be run on an always-on server/appliance. I run it on a Raspberry Pi zero which also [displays the upcoming Octopus Agile prices](https://github.com/nrbrook/octopus-agile-pi-prices/tree/inkyphat-improvements).
+
 ## Requirements
 - Python 3.x
 - Requests library
@@ -83,7 +85,4 @@ You should replace `/path/to/this/dir` and `/path/to/your/log.log` with your loc
 
 - Go to the octopus developer page and scroll to "Unit rates"
 - There you will see a URL, for example "https://api.octopus.energy/v1/products/AGILE-FLEX-22-11-25/electricity-tariffs/E-1R-AGILE-FLEX-22-11-25-M/standard-unit-rates/"
-- Look at this part: "E-1R-AGILE-FLEX-22-11-25-M". This is in the format E-1R-AGILE-<tariff>-<region>. The tariff is the part following "AGILE-", e.g. "FLEX-22-11-25". The region is the letter at the end, e.g. "M".
-
-## Note
-The script is intended for scheduled execution (e.g., via cron jobs) to automate EV charging processes.
+- Look at this part: `E-1R-AGILE-FLEX-22-11-25-M`. This is in the format `E-1R-AGILE-<tariff>-<region>`. The tariff is the part following "AGILE-", e.g. "FLEX-22-11-25". The region is the letter at the end, e.g. "M".

@@ -132,6 +132,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.log:
+        print(f"Logging to {args.log}")
         file_handler = RotatingFileHandler(args.log, maxBytes=log_file_max_size, backupCount=log_file_backup_count)
         file_handler.setLevel(logging.INFO)
         file_handler.setFormatter(logger_formatter)
@@ -140,6 +141,7 @@ if __name__ == "__main__":
         logger.addHandler(console_handler)
 
     if args.error:
+        print(f"Logging errors to {args.error}")
         error_handler = RotatingFileHandler(args.error, maxBytes=log_file_max_size, backupCount=log_file_backup_count)
         error_handler.setLevel(logging.ERROR)
         error_handler.setFormatter(logger_formatter)
