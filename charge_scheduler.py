@@ -94,10 +94,10 @@ def process_schedule(api_key, charger_uuid, schedule_file, db):
                 logger.info("No schedule")
                 return
 
-            price_pattern = re.compile(r'(\d+)p')
+            price_pattern = re.compile(r'(-?[\d\.]+)p')
             price_match = price_pattern.match(lines[0].strip())
             if price_match:
-                price_scheduler(api_key, charger_uuid, db, int(price_match.group(1)))
+                price_scheduler(api_key, charger_uuid, db, float(price_match.group(1)))
             else:
                 time_pattern = re.compile(r'(\d{1,2})([:.](\d{1,2}))?-(\d{1,2})([:.](\d{1,2}))?')
                 time_match = time_pattern.match(lines[0].strip())
